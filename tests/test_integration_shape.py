@@ -8,11 +8,26 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 import voluptuous as vol
 
 from custom_components.elprisapi import binary_sensor, config_flow, const, sensor
+
+
+def _walk_strings(node: Any, prefix: str = "") -> list[tuple[str, str]]:
+    """Flatten a translation tree into (path, string) pairs."""
+    out: list[tuple[str, str]] = []
+    if isinstance(node, dict):
+        for key, value in node.items():
+            out.extend(_walk_strings(value, f"{prefix}.{key}" if prefix else key))
+    elif isinstance(node, list):
+        for index, value in enumerate(node):
+            out.extend(_walk_strings(value, f"{prefix}[{index}]"))
+    elif isinstance(node, str):
+        out.append((prefix, node))
+    return out
 
 ROOT = Path(__file__).parents[1]
 COMPONENT_DIR = ROOT / "custom_components" / "elprisapi"
@@ -60,12 +75,26 @@ def test_config_flow_strings_cover_the_flow() -> None:
 
 
 def test_key_page_is_linked_where_it_is_needed() -> None:
-    """The setup form is where someone needs the link; losing it sends users hunting."""
+    """The setup form is where someone needs the link; losing it sends users hunting.
+
+    Home Assistant's hassfest rejects URLs inside translation strings, so the
+    forms carry a ``{key_url}`` placeholder and the flow supplies the value.
+    Assert both halves: the placeholder in the strings, and the URL in the flow
+    and the README.
+    """
     user_step = STRINGS["config"]["step"]["user"]
-    assert KEY_URL in user_step["description"]
-    assert KEY_URL in user_step["data_description"]["api_key"]
-    assert KEY_URL in STRINGS["config"]["step"]["reauth_confirm"]["description"]
+    assert "{key_url}" in user_step["description"]
+    assert "{key_url}" in user_step["data_description"]["api_key"]
+    assert "{key_url}" in STRINGS["config"]["step"]["reauth_confirm"]["description"]
+
+    # No bare URL may appear in any translated string.
+    for path, value in _walk_strings(STRINGS):
+        assert "http://" not in value and "https://" not in value, (
+            f"URL in translation string at {path}; use a description placeholder"
+        )
+
     assert KEY_URL in (ROOT / "README.md").read_text()
+    assert config_flow.KEY_URL == KEY_URL
 
 
 def test_sensor_descriptions() -> None:

@@ -9,5 +9,5 @@
   "issue_tracker": "https://github.com/czingenberg/elprisapi-ha/issues",
   "loggers": ["custom_components.elprisapi"],
   "requirements": [],
-  "version": "0.2.0"
+  "version": "0.2.1"
 }

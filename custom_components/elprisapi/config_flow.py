@@ -41,6 +41,10 @@ _LOGGER = logging.getLogger(__name__)
 # part of the unique id for such entries.
 NO_OPERATOR = "none"
 
+# Where a user gets a free key. Home Assistant rejects URLs inside translation
+# strings, so this is injected as a description placeholder instead.
+KEY_URL = "https://elprisapi.dk/#api-noegle"
+
 _API_KEY_SELECTOR = TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD))
 
 STEP_USER_SCHEMA = vol.Schema(
@@ -114,6 +118,7 @@ class ElprisApiConfigFlow(ConfigFlow, domain=DOMAIN):
                 STEP_USER_SCHEMA, user_input
             ),
             errors=errors,
+            description_placeholders={"key_url": KEY_URL},
         )
 
     async def async_step_operator(
@@ -191,7 +196,10 @@ class ElprisApiConfigFlow(ConfigFlow, domain=DOMAIN):
             errors["base"] = error
 
         return self.async_show_form(
-            step_id="reauth_confirm", data_schema=STEP_REAUTH_SCHEMA, errors=errors
+            step_id="reauth_confirm",
+            data_schema=STEP_REAUTH_SCHEMA,
+            errors=errors,
+            description_placeholders={"key_url": KEY_URL},
         )
 
 

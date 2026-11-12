@@ -3,13 +3,13 @@
     "step": {
       "user": {
         "title": "Elpris API",
-        "description": "Connect to data.elprisapi.dk to get Danish hourly electricity prices with the full tariff breakdown.\n\nYour API key is stored in the Home Assistant config entry.\n\n**No API key yet?** Get a free one at [elprisapi.dk/#api-noegle](https://elprisapi.dk/#api-noegle) — it is emailed to you.",
+        "description": "Connect to data.elprisapi.dk to get Danish hourly electricity prices with the full tariff breakdown.\n\nYour API key is stored in the Home Assistant config entry.\n\n**No API key yet?** Get a free one at {key_url} — it is emailed to you.",
         "data": {
           "api_key": "API key",
           "zone": "Price zone"
         },
         "data_description": {
-          "api_key": "Free from https://elprisapi.dk/#api-noegle. Sent as the X-Api-Key header to data.elprisapi.dk.",
+          "api_key": "Free from {key_url}. Sent as the X-Api-Key header to data.elprisapi.dk.",
           "zone": "DK1 is west of the Great Belt (Jutland and Funen); DK2 is east (Zealand and Bornholm)."
         }
       },
@@ -25,7 +25,7 @@
       },
       "reauth_confirm": {
         "title": "Elpris API key rejected",
-        "description": "data.elprisapi.dk rejected the stored API key. Enter a valid key to continue. A free key is available at [elprisapi.dk/#api-noegle](https://elprisapi.dk/#api-noegle).",
+        "description": "data.elprisapi.dk rejected the stored API key. Enter a valid key to continue. A free key is available at {key_url}.",
         "data": {
           "api_key": "API key"
         }
@@ -44,25 +44,59 @@
   },
   "entity": {
     "sensor": {
-      "current_price": { "name": "Current price" },
-      "current_price_excl_vat": { "name": "Current price excl. VAT" },
-      "spot_price": { "name": "Spot price" },
-      "electricity_tax": { "name": "Electricity tax" },
-      "system_tariff": { "name": "System tariff" },
-      "transmission_tariff": { "name": "Transmission tariff" },
-      "grid_tariff": { "name": "Grid tariff" },
-      "vat": { "name": "VAT" },
-      "today_min": { "name": "Today min price" },
-      "today_mean": { "name": "Today mean price" },
-      "today_max": { "name": "Today max price" },
-      "tomorrow_min": { "name": "Tomorrow min price" },
-      "tomorrow_mean": { "name": "Tomorrow mean price" },
-      "tomorrow_max": { "name": "Tomorrow max price" },
-      "today_forecast": { "name": "Today prices" },
-      "tomorrow_forecast": { "name": "Tomorrow prices" }
+      "current_price": {
+        "name": "Current price"
+      },
+      "current_price_excl_vat": {
+        "name": "Current price excl. VAT"
+      },
+      "spot_price": {
+        "name": "Spot price"
+      },
+      "electricity_tax": {
+        "name": "Electricity tax"
+      },
+      "system_tariff": {
+        "name": "System tariff"
+      },
+      "transmission_tariff": {
+        "name": "Transmission tariff"
+      },
+      "grid_tariff": {
+        "name": "Grid tariff"
+      },
+      "vat": {
+        "name": "VAT"
+      },
+      "today_min": {
+        "name": "Today min price"
+      },
+      "today_mean": {
+        "name": "Today mean price"
+      },
+      "today_max": {
+        "name": "Today max price"
+      },
+      "tomorrow_min": {
+        "name": "Tomorrow min price"
+      },
+      "tomorrow_mean": {
+        "name": "Tomorrow mean price"
+      },
+      "tomorrow_max": {
+        "name": "Tomorrow max price"
+      },
+      "today_forecast": {
+        "name": "Today prices"
+      },
+      "tomorrow_forecast": {
+        "name": "Tomorrow prices"
+      }
     },
     "binary_sensor": {
-      "tomorrow_prices_available": { "name": "Tomorrow prices available" }
+      "tomorrow_prices_available": {
+        "name": "Tomorrow prices available"
+      }
     }
   }
 }

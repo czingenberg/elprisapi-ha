@@ -10,6 +10,7 @@ harness so the flow runs exactly as it does live.
 from __future__ import annotations
 
 from contextlib import contextmanager
+import re
 from unittest.mock import patch
 
 import pytest
@@ -205,3 +206,35 @@ async def test_reauth_replaces_the_key(hass: HomeAssistant) -> None:
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "reauth_successful"
     assert entry.data == {"api_key": "new-key", "zone": "dk1", "operator": "trefor-el-net"}
+
+
+async def test_form_supplies_the_key_url_placeholder(hass: HomeAssistant) -> None:
+    """The form must hand the flow's URL to the translation placeholder.
+
+    Home Assistant's hassfest forbids URLs inside translation strings, so the
+    strings carry ``{key_url}`` and the flow supplies it. If that wiring is
+    dropped the user sees a literal ``{key_url}`` in the dialog.
+    """
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    placeholders = result["description_placeholders"]
+    assert placeholders["key_url"] == "https://elprisapi.dk/#api-noegle"
+
+    # Every placeholder used in the strings must be supplied, or the UI shows
+    # the raw braces.
+    import json
+    from pathlib import Path
+
+    strings = json.loads(
+        (Path(__file__).parents[1] / "custom_components/elprisapi/strings.json").read_text()
+    )
+    used = set()
+    for field in (
+        strings["config"]["step"]["user"]["description"],
+        strings["config"]["step"]["user"]["data_description"]["api_key"],
+    ):
+        used.update(re.findall(r"\{(\w+)\}", field))
+    assert used <= set(placeholders), f"unsupplied placeholders: {used - set(placeholders)}"

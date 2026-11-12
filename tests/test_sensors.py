@@ -142,14 +142,21 @@ async def test_current_price_changes_on_the_hour_without_a_poll(
 async def test_operators_in_one_zone_get_distinct_devices(hass: HomeAssistant) -> None:
     """Two operators in the same zone must not share a device name."""
     days = _both_days()
-    await _setup(hass, days, operator="trefor-el-net")
-    await _setup(hass, days, operator="n1")
-    await _setup(hass, days, operator=None)
+    entries = [
+        await _setup(hass, days, operator="trefor-el-net"),
+        await _setup(hass, days, operator="n1"),
+        await _setup(hass, days, operator=None),
+    ]
 
-    # Iterate the registry rather than using `.devices` as a mapping, which
-    # Home Assistant deprecated in 2026.11 (breaking in 2027.9). Iteration is
-    # the supported replacement.
-    names = sorted(device.name for device in dr.async_get(hass).devices)
+    # Use the per-entry lookup rather than `.devices`: iterating that yields
+    # device IDs on 2026.11+ and entries on 2026.10, and mapping access is
+    # deprecated (removed in 2027.9). This API is stable across both.
+    registry = dr.async_get(hass)
+    names = sorted(
+        device.name
+        for entry in entries
+        for device in dr.async_entries_for_config_entry(registry, entry.entry_id)
+    )
     assert names == [
         "Elpris API DK1",
         "Elpris API DK1 n1",
