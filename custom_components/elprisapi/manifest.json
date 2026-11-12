@@ -1,6 +1,9 @@
 {
   "domain": "elprisapi",
   "name": "Elpris API",
+  "categories": [
+    "energy.energy_prices"
+  ],
   "codeowners": [
     "@czingenberg"
   ],
@@ -13,8 +16,5 @@
     "custom_components.elprisapi"
   ],
   "requirements": [],
-  "version": "0.2.1",
-  "categories": [
-    "energy.energy_prices"
-  ]
+  "version": "0.2.1"
 }
