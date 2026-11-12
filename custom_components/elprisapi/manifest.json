@@ -1,13 +1,20 @@
 {
   "domain": "elprisapi",
   "name": "Elpris API",
-  "codeowners": ["@czingenberg"],
+  "codeowners": [
+    "@czingenberg"
+  ],
   "config_flow": true,
   "documentation": "https://github.com/czingenberg/elprisapi-ha",
   "integration_type": "service",
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/czingenberg/elprisapi-ha/issues",
-  "loggers": ["custom_components.elprisapi"],
+  "loggers": [
+    "custom_components.elprisapi"
+  ],
   "requirements": [],
-  "version": "0.2.1"
+  "version": "0.2.1",
+  "categories": [
+    "energy.energy_prices"
+  ]
 }
