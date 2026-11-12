@@ -6,18 +6,19 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
-from homeassistant.util import dt as dt_util
 
 from .api import ElprisApiAuthError, ElprisApiClient, ElprisApiError
 from .const import (
     CONF_API_KEY,
     CONF_OPERATOR,
     CONF_ZONE,
+    DANISH_TZ,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
 )
@@ -72,7 +73,8 @@ class ElprisApiCoordinator(DataUpdateCoordinator[ElprisApiData]):
 
     async def _async_update_data(self) -> ElprisApiData:
         """Fetch prices for today and tomorrow and derive the sensor values."""
-        today = dt_util.now().date()
+        tz = ZoneInfo(DANISH_TZ)
+        today = datetime.now(tz).date()
         tomorrow = today + timedelta(days=1)
 
         try:
@@ -99,8 +101,7 @@ class ElprisApiCoordinator(DataUpdateCoordinator[ElprisApiData]):
                 "Elpris API returned no prices for this zone/operator"
             )
 
-        now = dt_util.now()
-        tz = dt_util.get_default_time_zone()
+        now = datetime.now(tz)
 
         return ElprisApiData(
             zone=self.zone,

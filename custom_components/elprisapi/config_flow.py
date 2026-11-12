@@ -19,7 +19,12 @@ from homeassistant.helpers.selector import (
     TextSelectorType,
 )
 
-from .api import ElprisApiAuthError, ElprisApiClient, ElprisApiConnectionError
+from .api import (
+    ElprisApiAuthError,
+    ElprisApiClient,
+    ElprisApiConnectionError,
+    ElprisApiError,
+)
 from .const import (
     CONF_API_KEY,
     CONF_OPERATOR,
@@ -74,11 +79,14 @@ class ElprisApiConfigFlow(ConfigFlow, domain=DOMAIN):
                 errors["base"] = "invalid_auth"
             except ElprisApiConnectionError:
                 errors["base"] = "cannot_connect"
+            except ElprisApiError:
+                # A 400/404 here almost always means an unknown operator slug.
+                errors["base"] = "no_data"
             except Exception:  # noqa: BLE001 - surfaced to the user as a form error
                 _LOGGER.exception("Unexpected error validating Elpris API credentials")
                 errors["base"] = "unknown"
             else:
-                if not prices["today"].get("prices"):
+                if not prices.get("prices"):
                     # Credentials are fine but the zone/operator combination
                     # returned no data, which almost always means a bad slug.
                     errors["base"] = "no_data"
