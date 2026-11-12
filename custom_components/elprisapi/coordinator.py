@@ -47,6 +47,18 @@ class ElprisApiData:
         return current_slot(self.slots, self.now)
 
     @property
+    def current_breakdown(self) -> dict[str, Any] | None:
+        """The price components of the slot covering now.
+
+        ``current`` is a slot (start/end/breakdown); sensors read components
+        from this, not from the slot itself.
+        """
+        slot = self.current
+        if slot is None:
+            return None
+        return slot.get("breakdown")
+
+    @property
     def tomorrow_available(self) -> bool:
         """Whether tomorrow's prices have been published yet."""
         return bool(self.tomorrow_slots)

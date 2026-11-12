@@ -6,7 +6,7 @@ from datetime import timedelta
 
 DOMAIN = "elprisapi"
 NAME = "Elpris API"
-VERSION = "0.1.1"
+VERSION = "0.1.2"
 
 API_BASE = "https://data.elprisapi.dk"
 API_KEY_HEADER = "X-Api-Key"

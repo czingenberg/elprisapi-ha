@@ -43,7 +43,7 @@ class ElprisApiSensorEntityDescription(SensorEntityDescription):
 
 def _component(component: str) -> Callable[[ElprisApiData], float | None]:
     def _read(data: ElprisApiData) -> float | None:
-        return _attr(data.current, component)
+        return _attr(data.current_breakdown, component)
 
     return _read
 
