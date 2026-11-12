@@ -4,16 +4,31 @@ Custom integration for [data.elprisapi.dk](https://data.elprisapi.dk/docs/) — 
 hourly electricity prices (DK1/DK2) with the **full tariff breakdown**: spot price,
 electricity tax, system tariff, transmission tariff, grid operator tariff, and VAT.
 
-## Why this exists
+## What this is, and what it is not
 
-Home Assistant's `energidataservice` integration **does** include your grid operator
-tariff (nettarif) when it is configured with a `tariff_charge_owner` — on this
-installation both integrations produce the same total to the øre. What Elpris API adds
-is that the breakdown arrives as **separate per-component sensors** (spot, elafgift,
-systemtarif, transmissionstarif, nettarif and VAT as distinct values), rather than a
-single total with a `tariffs` attribute dict you have to template out of. Both
-integrations resolve the grid tariff per operator and both handle the hourly
-variation.
+It is a client for an API that resolves Danish electricity prices into their
+components, one sensor per component.
+
+It is **not** the only way to get a Danish price with the grid tariff (nettarif) in
+Home Assistant. The `energidataservice` integration does that too: configured with a
+`tariff_charge_owner`, it applies your grid operator's hourly charge, and on a
+reference installation the two produce the **same total to the øre**. Both sit on
+the same upstream data — elprisapi.dk sources from Energi Data Service, which is
+what `energidataservice` reads directly.
+
+So compare on convenience, not capability:
+
+| | `energidataservice` | this integration |
+| --- | --- | --- |
+| Total price with grid tariff | Yes (`tariff_charge_owner`) | Yes |
+| Grid tariff per hour | Yes, via the `tariffs` attribute | Yes, as `sensor.grid_tariff` |
+| Price components | One total plus a `tariffs` dict to template | One sensor each |
+| Setup | Must know the charge owner's exact name | Picks it from a dropdown |
+| VAT handling | Applies it or not, per option | Exposes both `total` and `vat` |
+
+If you already have `energidataservice` working with the right charge owner, you
+do not *need* this. It is worth adding if you want the components as first-class
+entities for templates, statistics or a dashboard.
 
 ## Entities
 
@@ -36,15 +51,17 @@ entities are:
 | `sensor.today_prices` / `sensor.tomorrow_prices` | Forecast lists |
 | `binary_sensor.tomorrow_prices_available` | On once tomorrow's prices are published (~13:00) |
 
-Prices are in **DKK per kWh**. The API also serves øre; this integration requests DKK
-so values drop straight into the Energy dashboard and `ev_smart_charging`.
+Prices are in **DKK per kWh**. The API also serves øre; this integration requests DKK,
+which the Energy dashboard accepts for a price entity since it validates the
+`/kWh` suffix rather than the currency.
 
-The current-price sensors change exactly when the price does, at the start of the
-hour, independent of when the API was last polled.
+The live price sensors use `state_class: measurement`, so long-term statistics keep
+their min/mean/max. They change at the start of each hour, when the price changes,
+independent of when the API was last polled.
 
 ### Forecast format
 
-The forecast attributes use the same shape as the `stromligning` integration:
+The forecasts are plain `prices` lists:
 
 ```yaml
 prices:
@@ -53,8 +70,15 @@ prices:
     end: "2026-11-12T14:00:00+01:00"
 ```
 
-Dashboards and automations written against `stromligning` work unchanged. The
-`prices` attribute is excluded from the recorder, so it does not grow the database.
+`current_price.prices` holds **today and tomorrow** (up to 48 entries). The per-day
+sensors hold their own day only.
+
+That shape means `ev_smart_charging` can use `sensor.current_price` as its price
+sensor directly — it accepts a `prices` attribute with `price` and `start` keys at
+hourly intervals, which is what this exposes. No template sensor needed.
+
+The `prices` attribute is excluded from the recorder, so it does not grow the
+database with a copy on every state change.
 
 ## Installation
 
