@@ -4,31 +4,25 @@ Custom integration for [data.elprisapi.dk](https://data.elprisapi.dk/docs/) — 
 hourly electricity prices (DK1/DK2) with the **full tariff breakdown**: spot price,
 electricity tax, system tariff, transmission tariff, grid operator tariff, and VAT.
 
-## What this is, and what it is not
+## What it gives you
 
-It is a client for an API that resolves Danish electricity prices into their
-components, one sensor per component.
+One sensor per price component, so the breakdown is available to templates,
+statistics and dashboards without parsing an attribute dict:
 
-It is **not** the only way to get a Danish price with the grid tariff (nettarif) in
-Home Assistant. The `energidataservice` integration does that too: configured with a
-`tariff_charge_owner`, it applies your grid operator's hourly charge, and on a
-reference installation the two produce the **same total to the øre**. Both sit on
-the same upstream data — elprisapi.dk sources from Energi Data Service, which is
-what `energidataservice` reads directly.
+- **Spot price** — the hourly market spot price for your price area
+- **Electricity tax** (elafgift)
+- **System tariff** (systemtarif)
+- **Transmission tariff** (transmissionsnettarif)
+- **Grid tariff** (nettarif) — your grid operator's charge, which varies by hour
+- **VAT** (moms), and the total both with and without it
 
-So compare on convenience, not capability:
+The grid tariff is included for all 33 Danish operators, resolved per hour from the
+operator's own charge codes, so the total reflects what you are billed rather than
+the spot price plus a flat guess.
 
-| | `energidataservice` | this integration |
-| --- | --- | --- |
-| Total price with grid tariff | Yes (`tariff_charge_owner`) | Yes |
-| Grid tariff per hour | Yes, via the `tariffs` attribute | Yes, as `sensor.grid_tariff` |
-| Price components | One total plus a `tariffs` dict to template | One sensor each |
-| Setup | Must know the charge owner's exact name | Picks it from a dropdown |
-| VAT handling | Applies it or not, per option | Exposes both `total` and `vat` |
-
-If you already have `energidataservice` working with the right charge owner, you
-do not *need* this. It is worth adding if you want the components as first-class
-entities for templates, statistics or a dashboard.
+Prices are hourly and cover today and tomorrow, so tomorrow's prices are available
+as soon as they are published (around 13:00) — enough to plan EV charging or
+appliance runs for the next day.
 
 ## Entities
 

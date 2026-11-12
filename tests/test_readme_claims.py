@@ -1,14 +1,13 @@
 """Guard the README's claims against reality.
 
-An earlier README claimed `energidataservice` does not provide the grid operator
-tariff (nettarif). That was false: with a `tariff_charge_owner` set, it does, and
-on the reference installation both integrations agree to the øre. It also claimed
-the output "drops straight into" `ev_smart_charging` and the Energy dashboard
-without checking either.
+Earlier versions of this README claimed `energidataservice` does not provide the
+grid operator tariff (nettarif). That was false: with a `tariff_charge_owner` set,
+it does, and on the reference installation both integrations agree to the øre.
 
-These tests keep the documentation honest. They fail if the README reintroduces a
-claim that was disproved, and they pin the facts that make its comparisons
-verifiable.
+The README no longer compares itself to other integrations at all — that was a
+weak way to open a project page. What still matters is that every claim it *does*
+make is true. These tests pin those claims to the API and to Home Assistant's own
+validation, and they fail if a disproved claim comes back.
 """
 
 from __future__ import annotations
@@ -21,8 +20,8 @@ import pytest
 README = Path(__file__).parents[1] / "README.md"
 
 
-def test_does_not_claim_energidataservice_lacks_the_grid_tariff() -> None:
-    """The disproved claim must stay gone."""
+def test_makes_no_false_claims_about_other_integrations() -> None:
+    """The disproved phrasings must stay gone."""
     lowered = README.read_text().lower()
     for phrase in (
         "but not your grid operator tariff",
@@ -30,37 +29,52 @@ def test_does_not_claim_energidataservice_lacks_the_grid_tariff() -> None:
         "does not include the grid operator tariff",
         "does not provide the grid operator tariff",
         "cannot give you the grid",
+        "no other integration gives you",
     ):
         assert phrase not in lowered, f"README reintroduced a false claim: {phrase!r}"
 
 
-def test_states_plainly_that_energidataservice_has_the_tariff() -> None:
-    """A reader must not come away thinking energidataservice is deficient."""
-    text = README.read_text()
-    assert "energidataservice" in text
-    assert "tariff_charge_owner" in text
-    assert "nettarif" in text.lower()
+def test_does_not_benchmark_itself_against_other_integrations() -> None:
+    """The project page describes what it does, not why rivals are worse.
 
-
-def test_does_not_overstate_what_it_adds() -> None:
-    """It must say it is not required, rather than overselling.
-
-    The honest position is that this integration is convenient, not
-    capability-only. A README that implies otherwise is misleading.
+    A comparison table invites the reader to ask "so why does this exist?", which
+    is a weaker opening than saying what the integration gives them.
     """
     lowered = README.read_text().lower()
-    # Markdown emphasis means the phrase spans "not **the only way**"; compare
-    # without the emphasis markers so the check does not depend on formatting.
-    plain = lowered.replace("**", "").replace("*", "")
-    assert "not the only way" in plain
-    assert "do not need this" in plain
+    for rival in ("energidataservice", "stromligning", "nordpool"):
+        assert rival not in lowered, (
+            f"README compares itself to {rival}; describe this integration instead"
+        )
 
 
-def test_records_that_the_upstream_data_is_shared() -> None:
-    """Both integrations read the same source; the README must say so."""
+def test_states_what_the_grid_tariff_is() -> None:
+    """The differentiator is stated positively, using the term users search for."""
     text = README.read_text()
-    assert "Energi Data Service" in text
-    assert re.search(r"same upstream|sources from Energi Data Service|same total", text)
+    assert "nettarif" in text.lower()
+    assert "grid tariff" in text.lower()
+
+
+def test_does_not_dig_at_unnamed_alternatives() -> None:
+    """No indirect swipes at "other" products either.
+
+    "The part most price sources leave you to work out" is the same weakness as
+    naming a rival: it defines the project by what it supposedly beats.
+    """
+    lowered = README.read_text().lower()
+    for phrase in (
+        "most price sources",
+        "unlike other",
+        "other integrations don't",
+        "other integrations do not",
+        "cheaper than",
+        "better than",
+    ):
+        assert phrase not in lowered, f"README takes a swipe at alternatives: {phrase!r}"
+
+
+def test_operator_count_matches_the_api() -> None:
+    """The README states how many operators the API covers."""
+    assert "33" in README.read_text(), "operator count claim disappeared"
 
 
 def test_forecast_claim_matches_the_attribute_shape() -> None:
