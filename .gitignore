@@ -1,0 +1,14 @@
+# Home Assistant
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+
+# Secrets
+elapi
+.env
+
+# Editors
+.vscode/
+.idea/
+.DS_Store

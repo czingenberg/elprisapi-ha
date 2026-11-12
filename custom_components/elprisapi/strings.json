@@ -1,0 +1,52 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Elpris API",
+        "description": "Connect to data.elprisapi.dk to get Danish hourly electricity prices with the full tariff breakdown.\n\nYour API key is stored in the Home Assistant config entry.",
+        "data": {
+          "api_key": "API key",
+          "zone": "Price zone",
+          "operator": "Grid operator slug (optional)"
+        },
+        "data_description": {
+          "api_key": "Sent as the X-Api-Key header to data.elprisapi.dk.",
+          "zone": "DK1 is west of the Great Belt (Jutland and Funen); DK2 is east (Zealand and Bornholm).",
+          "operator": "Adds the grid operator tariff. Leave empty to get prices without it. Slugs include rah, n1, radius, trefor-el-net."
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "The API key was rejected.",
+      "cannot_connect": "Could not reach data.elprisapi.dk.",
+      "no_data": "No prices returned. Check the zone and the grid operator slug.",
+      "unknown": "Unexpected error. Check the Home Assistant log."
+    },
+    "abort": {
+      "already_configured": "This zone and grid operator are already configured."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "current_price": { "name": "Current price" },
+      "current_price_excl_vat": { "name": "Current price excl. VAT" },
+      "spot_price": { "name": "Spot price" },
+      "electricity_tax": { "name": "Electricity tax" },
+      "system_tariff": { "name": "System tariff" },
+      "transmission_tariff": { "name": "Transmission tariff" },
+      "grid_tariff": { "name": "Grid tariff" },
+      "vat": { "name": "VAT" },
+      "today_min": { "name": "Today min price" },
+      "today_mean": { "name": "Today mean price" },
+      "today_max": { "name": "Today max price" },
+      "tomorrow_min": { "name": "Tomorrow min price" },
+      "tomorrow_mean": { "name": "Tomorrow mean price" },
+      "tomorrow_max": { "name": "Tomorrow max price" },
+      "today_forecast": { "name": "Today prices" },
+      "tomorrow_forecast": { "name": "Tomorrow prices" }
+    },
+    "binary_sensor": {
+      "tomorrow_prices_available": { "name": "Tomorrow prices available" }
+    }
+  }
+}
