@@ -6,10 +6,14 @@ electricity tax, system tariff, transmission tariff, grid operator tariff, and V
 
 ## Why this exists
 
-Home Assistant's built-in `energidataservice` integration gives you spot price plus
-system tariffs, but not your **grid operator tariff** (nettarif). That component is
-often the largest part of the bill and varies hour by hour. Elpris API resolves it per
-operator, so this integration can show a total price that actually reconciles.
+Home Assistant's `energidataservice` integration **does** include your grid operator
+tariff (nettarif) when it is configured with a `tariff_charge_owner` — on this
+installation both integrations produce the same total to the øre. What Elpris API adds
+is that the breakdown arrives as **separate per-component sensors** (spot, elafgift,
+systemtarif, transmissionstarif, nettarif and VAT as distinct values), rather than a
+single total with a `tariffs` attribute dict you have to template out of. Both
+integrations resolve the grid tariff per operator and both handle the hourly
+variation.
 
 ## Entities
 
