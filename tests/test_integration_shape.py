@@ -1,135 +1,93 @@
-"""Validate the integration modules against a real Home Assistant install.
+"""Validate the integration's static shape against a real Home Assistant install.
 
-Catches import errors, bad entity descriptions, translation gaps and
-manifest problems that the pure pricing tests cannot see.
-
-Run: .venv/bin/python tests/test_integration_shape.py
+Catches bad entity descriptions, translation gaps and manifest problems that
+the behavioural tests cannot see.
 """
 
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
-COMPONENT_DIR = Path(__file__).parents[1] / "custom_components" / "elprisapi"
-sys.path.insert(0, str(COMPONENT_DIR.parents[1]))
+import pytest
+import voluptuous as vol
 
-failures: list[str] = []
+from custom_components.elprisapi import binary_sensor, config_flow, const, sensor
 
-
-def check(label: str, condition: bool, detail: str = "") -> None:
-    if condition:
-        print(f"  PASS  {label}")
-    else:
-        print(f"  FAIL  {label} {detail}")
-        failures.append(label)
-
-
-print("manifest.json")
-manifest = json.loads((COMPONENT_DIR / "manifest.json").read_text())
-required = {"domain", "name", "version", "config_flow", "iot_class", "documentation"}
-check("required keys present", required <= set(manifest), str(required - set(manifest)))
-check("domain matches folder", manifest["domain"] == COMPONENT_DIR.name)
-check("config_flow enabled", manifest["config_flow"] is True)
-check("iot_class is cloud_polling", manifest["iot_class"] == "cloud_polling")
-check("no requirements needed", manifest["requirements"] == [])
-
-print("\nstrings / translations")
-strings = json.loads((COMPONENT_DIR / "strings.json").read_text())
-en = json.loads((COMPONENT_DIR / "translations" / "en.json").read_text())
-check("en.json matches strings.json", strings == en)
-check("config step user exists", "user" in strings["config"]["step"])
-form_fields = set(strings["config"]["step"]["user"]["data"])
-check(
-    "form fields cover flow schema",
-    {"api_key", "zone", "operator"} <= form_fields,
-    str(form_fields),
-)
-check(
-    "all error keys translated",
-    {"invalid_auth", "cannot_connect", "no_data", "unknown"}
-    <= set(strings["config"]["error"]),
-)
-check(
-    "abort already_configured translated",
-    "already_configured" in strings["config"]["abort"],
-)
-
-# The setup form is where someone needs the link, so keep it there and in the
-# per-field hint. Losing it sends users hunting for where to get a key.
+ROOT = Path(__file__).parents[1]
+COMPONENT_DIR = ROOT / "custom_components" / "elprisapi"
 KEY_URL = "https://elprisapi.dk/#api-noegle"
-_step = strings["config"]["step"]["user"]
-check("setup form links to the key page", KEY_URL in _step["description"])
-check(
-    "api_key hint links to the key page",
-    KEY_URL in _step["data_description"]["api_key"],
-)
-check(
-    "README links to the key page",
-    KEY_URL in (COMPONENT_DIR.parents[1] / "README.md").read_text(),
-)
+REPO_URL = "https://github.com/czingenberg/elprisapi-ha"
 
-print("\nmodule imports")
-from custom_components.elprisapi import api, binary_sensor, config_flow, const, coordinator, pricing, sensor  # noqa: E402
+MANIFEST = json.loads((COMPONENT_DIR / "manifest.json").read_text())
+STRINGS = json.loads((COMPONENT_DIR / "strings.json").read_text())
+SENSOR_KEYS = [description.key for description in sensor.SENSORS]
 
-check("api imports", hasattr(api, "ElprisApiClient"))
-check("coordinator imports", hasattr(coordinator, "ElprisApiCoordinator"))
-check("sensor imports", hasattr(sensor, "async_setup_entry"))
-check("binary_sensor imports", hasattr(binary_sensor, "async_setup_entry"))
-check("config_flow imports", hasattr(config_flow, "ElprisApiConfigFlow"))
 
-print("\nsensor descriptions")
-descriptions = sensor.SENSORS
-keys = [d.key for d in descriptions]
-check("sensor keys unique", len(keys) == len(set(keys)), str(keys))
-check("16 sensors defined", len(descriptions) == 16, str(len(descriptions)))
+def test_manifest() -> None:
+    required = {"domain", "name", "version", "config_flow", "iot_class", "documentation"}
+    assert required <= set(MANIFEST)
+    assert MANIFEST["domain"] == COMPONENT_DIR.name == const.DOMAIN
+    assert MANIFEST["config_flow"] is True
+    assert MANIFEST["iot_class"] == "cloud_polling"
+    assert MANIFEST["requirements"] == []
 
-translated = set(strings["entity"]["sensor"])
-check(
-    "every sensor has a translation",
-    set(keys) <= translated,
-    str(set(keys) - translated),
-)
-check(
-    "no orphan sensor translations",
-    translated <= set(keys),
-    str(translated - set(keys)),
-)
-for d in descriptions:
-    check(f"{d.key}: has translation_key", d.translation_key == d.key)
-    check(f"{d.key}: readable callable", callable(d.value_fn))
 
-binary_keys = {binary_sensor.TOMORROW_AVAILABLE.key}
-check(
-    "binary sensor translated",
-    binary_keys <= set(strings["entity"]["binary_sensor"]),
-)
+def test_manifest_points_at_this_repository() -> None:
+    assert MANIFEST["issue_tracker"] == f"{REPO_URL}/issues"
+    assert MANIFEST["codeowners"] == ["@czingenberg"]
+    assert REPO_URL in (ROOT / "README.md").read_text()
 
-print("\nmonetary sensors declare device_class + unit")
-for d in descriptions:
-    if d.device_class is not None:
-        check(f"{d.key}: has unit", bool(d.native_unit_of_measurement))
 
-print("\nconfig flow schema builds")
-schema = config_flow.STEP_USER_SCHEMA
-try:
-    schema({})
-except Exception as err:  # noqa: BLE001 - expected: required keys missing
-    check("schema rejects empty input", "required" in str(err).lower() or "required key" in str(err), str(err))
-else:
-    check("schema rejects empty input", False, "empty dict accepted")
+def test_english_translation_matches_strings() -> None:
+    en = json.loads((COMPONENT_DIR / "translations" / "en.json").read_text())
+    assert en == STRINGS
 
-print("\nconst sanity")
-check("zones are dk1/dk2", const.ZONES == ["dk1", "dk2"])
-check("default zone is dk1", const.DEFAULT_ZONE == "dk1")
-check("api base has no trailing slash", not const.API_BASE.endswith("/"))
-check("scan interval is a timedelta", const.DEFAULT_SCAN_INTERVAL.total_seconds() > 0)
 
-print()
-if failures:
-    print(f"FAILED: {len(failures)} check(s)")
-    for f in failures:
-        print(f"  - {f}")
-    sys.exit(1)
-print("All integration shape checks passed.")
+def test_config_flow_strings_cover_the_flow() -> None:
+    steps = STRINGS["config"]["step"]
+    assert set(steps) == {"user", "operator", "reauth_confirm"}
+    assert set(steps["user"]["data"]) == {"api_key", "zone"}
+    assert set(steps["operator"]["data"]) == {"operator"}
+    assert set(steps["reauth_confirm"]["data"]) == {"api_key"}
+    assert set(STRINGS["config"]["error"]) == {
+        "invalid_auth",
+        "cannot_connect",
+        "no_data",
+        "unknown",
+    }
+    assert set(STRINGS["config"]["abort"]) == {"already_configured", "reauth_successful"}
+
+
+def test_key_page_is_linked_where_it_is_needed() -> None:
+    """The setup form is where someone needs the link; losing it sends users hunting."""
+    user_step = STRINGS["config"]["step"]["user"]
+    assert KEY_URL in user_step["description"]
+    assert KEY_URL in user_step["data_description"]["api_key"]
+    assert KEY_URL in STRINGS["config"]["step"]["reauth_confirm"]["description"]
+    assert KEY_URL in (ROOT / "README.md").read_text()
+
+
+def test_sensor_descriptions() -> None:
+    assert len(SENSOR_KEYS) == len(set(SENSOR_KEYS)) == 16
+    assert set(SENSOR_KEYS) == set(STRINGS["entity"]["sensor"])
+    assert binary_sensor.TOMORROW_AVAILABLE.key in STRINGS["entity"]["binary_sensor"]
+
+
+@pytest.mark.parametrize("description", sensor.SENSORS, ids=SENSOR_KEYS)
+def test_sensor_description(description) -> None:
+    assert description.translation_key == description.key
+    assert description.native_unit_of_measurement == "DKK/kWh"
+    assert callable(description.value_fn)
+
+
+def test_config_flow_schema_requires_input() -> None:
+    with pytest.raises(vol.Invalid):
+        config_flow.STEP_USER_SCHEMA({})
+
+
+def test_constants() -> None:
+    assert const.ZONES == ["dk1", "dk2"]
+    assert const.DEFAULT_ZONE in const.ZONES
+    assert not const.API_BASE.endswith("/")
+    assert const.SCAN_INTERVAL_WAITING < const.SCAN_INTERVAL_IDLE

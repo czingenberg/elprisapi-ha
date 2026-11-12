@@ -1,7 +1,7 @@
 """Live smoke test against data.elprisapi.dk using the real client.
 
 Run: .venv/bin/python tests/live_check.py
-Requires the API key in the file ../elapi or the ELPRIS_API_KEY env var.
+Requires the API key in the ELPRIS_API_KEY env var or the file ~/elapi.
 """
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
-from datetime import date, timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import aiohttp
@@ -69,10 +69,23 @@ async def main() -> int:
         health = await client.async_get_health()
         print(f"health          : {health['status']} (latest spot {health.get('latest_spot_date')})")
 
+        # "Today" is the Danish calendar day, whatever this machine's timezone.
+        now = datetime.now(CPH)
+        today = now.date()
+        tomorrow = today + timedelta(days=1)
+
         today_payload = await client.async_get_prices(zone, operator)
-        tomorrow_payload = await client.async_get_prices(
-            zone, operator, day=date.today() + timedelta(days=1)
+        tomorrow_payload = await client.async_get_prices(zone, operator, day=tomorrow)
+
+        # The integration fetches both days in one range request; it must
+        # return exactly what the two single-day requests return.
+        range_payload = await client.async_get_prices(
+            zone, operator, start=today, end=tomorrow
         )
+        assert range_payload["prices"] == (
+            today_payload["prices"] + tomorrow_payload["prices"]
+        ), "range request differs from the two single-day requests"
+        print("range request   : OK (matches today + tomorrow)")
 
         print(f"unit            : {today_payload['unit']}")
         print(f"today entries   : {len(today_payload['prices'])}")
@@ -81,7 +94,6 @@ async def main() -> int:
         slots = build_slots(today_payload["prices"]) + build_slots(
             tomorrow_payload["prices"]
         )
-        now = __import__("datetime").datetime.now(CPH)
         cur = current_slot(slots, now)
         if cur is None:
             print("current         : OUTSIDE DATA WINDOW", file=sys.stderr)
@@ -114,11 +126,16 @@ async def main() -> int:
         assert abs(b["total_excl_vat"] + b["vat"] - b["total"]) < 0.02, b
         print("breakdown maths : OK (sums and 25% VAT reconcile)")
 
-        for label, day in (("today", date.today()), ("tomorrow", date.today() + timedelta(days=1))):
+        for label, day in (("today", today), ("tomorrow", tomorrow)):
             stats = stats_for_date(slots, day, CPH)
             print(f"{label:15s}   : {stats}")
 
         print(f"forecast length : {len(forecast_attribute(slots))}")
+
+        operators = await client.async_get_operators()
+        slugs = [o["slug"] for o in operators["operators"]]
+        assert operator in slugs, f"{operator} not in operator list"
+        print(f"operator list   : {len(slugs)} operators")
 
         op = await client.async_get_operator(operator)
         print(f"operator        : {op['name']} ({op['company']}) GLN {op.get('gln_number')}")

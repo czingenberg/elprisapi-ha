@@ -43,6 +43,33 @@ def test_build_slots_orders_and_computes_end():
     assert slots[0]["end"] - slots[0]["start"] == timedelta(hours=1)
 
 
+def test_slot_length_follows_the_data_resolution():
+    """Finer-grained prices must give short slots that do not overlap."""
+    slots = build_slots(
+        [
+            _entry("2026-11-12T13:00:00+01:00", 1.0),
+            _entry("2026-11-12T13:15:00+01:00", 2.0),
+            _entry("2026-11-12T13:30:00+01:00", 3.0),
+        ]
+    )
+    assert all(s["end"] - s["start"] == timedelta(minutes=15) for s in slots)
+    now = datetime(2026, 11, 12, 13, 20, tzinfo=CPH)
+    assert current_slot(slots, now)["breakdown"]["total"] == 2.0
+
+
+def test_a_gap_in_the_data_does_not_stretch_slots():
+    slots = build_slots(
+        [_entry("2026-11-12T00:00:00+01:00", 1.0), _entry("2026-11-12T05:00:00+01:00", 2.0)]
+    )
+    assert slots[0]["end"] - slots[0]["start"] == timedelta(hours=1)
+    assert current_slot(slots, datetime(2026, 11, 12, 3, 0, tzinfo=CPH)) is None
+
+
+def test_unparseable_component_is_dropped():
+    slots = build_slots([{"hour": "2026-11-12T00:00:00+01:00", "total": "n/a", "vat": "0.5"}])
+    assert slots[0]["breakdown"] == {"vat": 0.5}
+
+
 def test_current_slot_inside_and_outside():
     slots = build_slots([_entry("2026-11-12T13:00:00+01:00", 150.0)])
     inside = datetime(2026, 11, 12, 13, 30, tzinfo=CPH)

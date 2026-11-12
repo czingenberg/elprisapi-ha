@@ -6,56 +6,49 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from homeassistant.components.sensor import (
-    SensorDeviceClass,
     SensorEntity,
     SensorEntityDescription,
     SensorStateClass,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfEnergy
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, MANUFACTURER, VERSION
-from .coordinator import ElprisApiCoordinator, ElprisApiData
-from .pricing import COMPONENTS, forecast_attribute
+from .coordinator import ElprisApiConfigEntry, ElprisApiCoordinator, ElprisApiData
+from .entity import ElprisApiEntity
+from .pricing import forecast_attribute
 
-# Home Assistant has no currency constant for DKK, so it is passed as a literal.
-CURRENCY_DKK = "DKK"
+PRICE_UNIT = f"DKK/{UnitOfEnergy.KILO_WATT_HOUR}"
 
-
-def _attr(document: dict[str, Any] | None, key: str) -> float | None:
-    """Read one price component from a slot breakdown."""
-    if not document:
-        return None
-    return document.get(key)
+type ValueFn = Callable[[ElprisApiData], float | None]
+type ExtraFn = Callable[[ElprisApiData], dict[str, Any]]
 
 
 @dataclass(frozen=True, kw_only=True)
 class ElprisApiSensorEntityDescription(SensorEntityDescription):
     """Describes an Elpris API sensor and how to read its value."""
 
-    value_fn: Callable[[ElprisApiData], float | None]
-    extra_fn: Callable[[ElprisApiData], dict[str, Any]] | None = None
-    component: str | None = None
+    value_fn: ValueFn
+    extra_fn: ExtraFn | None = None
 
 
-def _component(component: str) -> Callable[[ElprisApiData], float | None]:
+def _component(component: str) -> ValueFn:
+    """Read one price component of the slot covering now."""
+
     def _read(data: ElprisApiData) -> float | None:
-        return _attr(data.current_breakdown, component)
+        return (data.current_breakdown or {}).get(component)
 
     return _read
 
 
-def _today_stat(stat: str) -> Callable[[ElprisApiData], float | None]:
+def _today_stat(stat: str) -> ValueFn:
     def _read(data: ElprisApiData) -> float | None:
         return (data.today_stats or {}).get(stat)
 
     return _read
 
 
-def _tomorrow_stat(stat: str) -> Callable[[ElprisApiData], float | None]:
+def _tomorrow_stat(stat: str) -> ValueFn:
     def _read(data: ElprisApiData) -> float | None:
         return (data.tomorrow_stats or {}).get(stat)
 
@@ -77,190 +70,99 @@ def _tomorrow_forecast(data: ElprisApiData) -> dict[str, Any]:
     return {"prices": forecast_attribute(data.tomorrow_slots)}
 
 
+def _price(
+    key: str,
+    icon: str,
+    value_fn: ValueFn,
+    *,
+    live: bool = False,
+    extra_fn: ExtraFn | None = None,
+) -> ElprisApiSensorEntityDescription:
+    """Describe a DKK/kWh sensor.
+
+    These are prices per kWh, not amounts of money, so they deliberately have
+    no ``monetary`` device class. ``live`` sensors follow the current slot and
+    are recorded as measurements so long-term statistics hold min/mean/max.
+    """
+    return ElprisApiSensorEntityDescription(
+        key=key,
+        translation_key=key,
+        icon=icon,
+        native_unit_of_measurement=PRICE_UNIT,
+        state_class=SensorStateClass.MEASUREMENT if live else None,
+        suggested_display_precision=4,
+        value_fn=value_fn,
+        extra_fn=extra_fn,
+    )
+
+
 SENSORS: tuple[ElprisApiSensorEntityDescription, ...] = (
-    ElprisApiSensorEntityDescription(
-        key="current_price",
-        translation_key="current_price",
-        name="Current price",
-        native_unit_of_measurement=f"{CURRENCY_DKK}/{UnitOfEnergy.KILO_WATT_HOUR}",
-        device_class=SensorDeviceClass.MONETARY,
-        state_class=SensorStateClass.TOTAL,
-        suggested_display_precision=4,
-        value_fn=_component("total"),
-        extra_fn=_forecast,
-        icon="mdi:flash",
+    _price(
+        "current_price", "mdi:flash", _component("total"), live=True, extra_fn=_forecast
     ),
-    ElprisApiSensorEntityDescription(
-        key="current_price_excl_vat",
-        translation_key="current_price_excl_vat",
-        name="Current price excl. VAT",
-        native_unit_of_measurement=f"{CURRENCY_DKK}/{UnitOfEnergy.KILO_WATT_HOUR}",
-        device_class=SensorDeviceClass.MONETARY,
-        state_class=SensorStateClass.TOTAL,
-        suggested_display_precision=4,
-        value_fn=_component("total_excl_vat"),
-        icon="mdi:flash-outline",
+    _price(
+        "current_price_excl_vat",
+        "mdi:flash-outline",
+        _component("total_excl_vat"),
+        live=True,
     ),
-    ElprisApiSensorEntityDescription(
-        key="spot_price",
-        translation_key="spot_price",
-        name="Spot price",
-        native_unit_of_measurement=f"{CURRENCY_DKK}/{UnitOfEnergy.KILO_WATT_HOUR}",
-        device_class=SensorDeviceClass.MONETARY,
-        state_class=SensorStateClass.TOTAL,
-        suggested_display_precision=4,
-        value_fn=_component("spot_price"),
-        icon="mdi:chart-line",
+    _price("spot_price", "mdi:chart-line", _component("spot_price"), live=True),
+    _price("electricity_tax", "mdi:cash", _component("electricity_tax"), live=True),
+    _price(
+        "system_tariff", "mdi:transmission-tower", _component("system_tariff"), live=True
     ),
-    ElprisApiSensorEntityDescription(
-        key="electricity_tax",
-        translation_key="electricity_tax",
-        name="Electricity tax",
-        native_unit_of_measurement=f"{CURRENCY_DKK}/{UnitOfEnergy.KILO_WATT_HOUR}",
-        device_class=SensorDeviceClass.MONETARY,
-        state_class=SensorStateClass.TOTAL,
-        suggested_display_precision=4,
-        value_fn=_component("electricity_tax"),
-        icon="mdi:cash",
+    _price(
+        "transmission_tariff",
+        "mdi:transmission-tower-export",
+        _component("transmission_tariff"),
+        live=True,
     ),
-    ElprisApiSensorEntityDescription(
-        key="system_tariff",
-        translation_key="system_tariff",
-        name="System tariff",
-        native_unit_of_measurement=f"{CURRENCY_DKK}/{UnitOfEnergy.KILO_WATT_HOUR}",
-        device_class=SensorDeviceClass.MONETARY,
-        state_class=SensorStateClass.TOTAL,
-        suggested_display_precision=4,
-        value_fn=_component("system_tariff"),
-        icon="mdi:transmission-tower",
+    _price(
+        "grid_tariff",
+        "mdi:transmission-tower-import",
+        _component("grid_tariff"),
+        live=True,
     ),
-    ElprisApiSensorEntityDescription(
-        key="transmission_tariff",
-        translation_key="transmission_tariff",
-        name="Transmission tariff",
-        native_unit_of_measurement=f"{CURRENCY_DKK}/{UnitOfEnergy.KILO_WATT_HOUR}",
-        device_class=SensorDeviceClass.MONETARY,
-        state_class=SensorStateClass.TOTAL,
-        suggested_display_precision=4,
-        value_fn=_component("transmission_tariff"),
-        icon="mdi:transmission-tower-export",
-    ),
-    ElprisApiSensorEntityDescription(
-        key="grid_tariff",
-        translation_key="grid_tariff",
-        name="Grid tariff",
-        native_unit_of_measurement=f"{CURRENCY_DKK}/{UnitOfEnergy.KILO_WATT_HOUR}",
-        device_class=SensorDeviceClass.MONETARY,
-        state_class=SensorStateClass.TOTAL,
-        suggested_display_precision=4,
-        value_fn=_component("grid_tariff"),
-        icon="mdi:transmission-tower-import",
-    ),
-    ElprisApiSensorEntityDescription(
-        key="vat",
-        translation_key="vat",
-        name="VAT",
-        native_unit_of_measurement=f"{CURRENCY_DKK}/{UnitOfEnergy.KILO_WATT_HOUR}",
-        device_class=SensorDeviceClass.MONETARY,
-        state_class=SensorStateClass.TOTAL,
-        suggested_display_precision=4,
-        value_fn=_component("vat"),
-        icon="mdi:percent",
-    ),
-    ElprisApiSensorEntityDescription(
-        key="today_min",
-        translation_key="today_min",
-        name="Today min price",
-        native_unit_of_measurement=f"{CURRENCY_DKK}/{UnitOfEnergy.KILO_WATT_HOUR}",
-        device_class=SensorDeviceClass.MONETARY,
-        value_fn=_today_stat("min"),
-        icon="mdi:arrow-down",
-    ),
-    ElprisApiSensorEntityDescription(
-        key="today_mean",
-        translation_key="today_mean",
-        name="Today mean price",
-        native_unit_of_measurement=f"{CURRENCY_DKK}/{UnitOfEnergy.KILO_WATT_HOUR}",
-        device_class=SensorDeviceClass.MONETARY,
-        suggested_display_precision=4,
-        value_fn=_today_stat("mean"),
-        icon="mdi:approximately-equal",
-    ),
-    ElprisApiSensorEntityDescription(
-        key="today_max",
-        translation_key="today_max",
-        name="Today max price",
-        native_unit_of_measurement=f"{CURRENCY_DKK}/{UnitOfEnergy.KILO_WATT_HOUR}",
-        device_class=SensorDeviceClass.MONETARY,
-        value_fn=_today_stat("max"),
-        icon="mdi:arrow-up",
-    ),
-    ElprisApiSensorEntityDescription(
-        key="tomorrow_min",
-        translation_key="tomorrow_min",
-        name="Tomorrow min price",
-        native_unit_of_measurement=f"{CURRENCY_DKK}/{UnitOfEnergy.KILO_WATT_HOUR}",
-        device_class=SensorDeviceClass.MONETARY,
-        value_fn=_tomorrow_stat("min"),
-        icon="mdi:arrow-down",
-    ),
-    ElprisApiSensorEntityDescription(
-        key="tomorrow_mean",
-        translation_key="tomorrow_mean",
-        name="Tomorrow mean price",
-        native_unit_of_measurement=f"{CURRENCY_DKK}/{UnitOfEnergy.KILO_WATT_HOUR}",
-        device_class=SensorDeviceClass.MONETARY,
-        suggested_display_precision=4,
-        value_fn=_tomorrow_stat("mean"),
-        icon="mdi:approximately-equal",
-    ),
-    ElprisApiSensorEntityDescription(
-        key="tomorrow_max",
-        translation_key="tomorrow_max",
-        name="Tomorrow max price",
-        native_unit_of_measurement=f"{CURRENCY_DKK}/{UnitOfEnergy.KILO_WATT_HOUR}",
-        device_class=SensorDeviceClass.MONETARY,
-        value_fn=_tomorrow_stat("max"),
-        icon="mdi:arrow-up",
-    ),
-    ElprisApiSensorEntityDescription(
-        key="today_forecast",
-        translation_key="today_forecast",
-        name="Today prices",
-        native_unit_of_measurement=f"{CURRENCY_DKK}/{UnitOfEnergy.KILO_WATT_HOUR}",
-        value_fn=lambda data: _today_stat("mean")(data),
+    _price("vat", "mdi:percent", _component("vat"), live=True),
+    _price("today_min", "mdi:arrow-down", _today_stat("min")),
+    _price("today_mean", "mdi:approximately-equal", _today_stat("mean")),
+    _price("today_max", "mdi:arrow-up", _today_stat("max")),
+    _price("tomorrow_min", "mdi:arrow-down", _tomorrow_stat("min")),
+    _price("tomorrow_mean", "mdi:approximately-equal", _tomorrow_stat("mean")),
+    _price("tomorrow_max", "mdi:arrow-up", _tomorrow_stat("max")),
+    _price(
+        "today_forecast",
+        "mdi:calendar-today",
+        _today_stat("mean"),
         extra_fn=_today_forecast,
-        icon="mdi:calendar-today",
     ),
-    ElprisApiSensorEntityDescription(
-        key="tomorrow_forecast",
-        translation_key="tomorrow_forecast",
-        name="Tomorrow prices",
-        native_unit_of_measurement=f"{CURRENCY_DKK}/{UnitOfEnergy.KILO_WATT_HOUR}",
-        value_fn=lambda data: _tomorrow_stat("mean")(data),
+    _price(
+        "tomorrow_forecast",
+        "mdi:calendar-arrow-right",
+        _tomorrow_stat("mean"),
         extra_fn=_tomorrow_forecast,
-        icon="mdi:calendar-arrow-right",
     ),
 )
 
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: ElprisApiConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Elpris API sensors from a config entry."""
-    coordinator: ElprisApiCoordinator = hass.data[DOMAIN][entry.entry_id]
     async_add_entities(
-        ElprisApiSensor(coordinator, description) for description in SENSORS
+        ElprisApiSensor(entry.runtime_data, description) for description in SENSORS
     )
 
 
-class ElprisApiSensor(CoordinatorEntity[ElprisApiCoordinator], SensorEntity):
+class ElprisApiSensor(ElprisApiEntity, SensorEntity):
     """A price component or daily statistic from Elpris API."""
 
-    _attr_has_entity_name = True
     entity_description: ElprisApiSensorEntityDescription
+    # The forecast list is large and changes daily; keeping it out of the
+    # recorder avoids storing a copy with every state change.
+    _unrecorded_attributes = frozenset({"prices"})
 
     def __init__(
         self,
@@ -268,18 +170,8 @@ class ElprisApiSensor(CoordinatorEntity[ElprisApiCoordinator], SensorEntity):
         description: ElprisApiSensorEntityDescription,
     ) -> None:
         """Initialise the sensor."""
-        super().__init__(coordinator)
+        super().__init__(coordinator, description.key)
         self.entity_description = description
-        self._attr_unique_id = f"{coordinator.zone}_{coordinator.operator or 'none'}_{description.key}"
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, f"{coordinator.zone}_{coordinator.operator or 'none'}")},
-            "name": f"Elpris API {coordinator.zone.upper()}",
-            "manufacturer": MANUFACTURER,
-            "model": f"Elpris API · {coordinator.zone.upper()}"
-            + (f" · {coordinator.operator}" if coordinator.operator else ""),
-            "sw_version": VERSION,
-            "configuration_url": "https://data.elprisapi.dk/docs/",
-        }
 
     @property
     def native_value(self) -> float | None:
@@ -290,7 +182,7 @@ class ElprisApiSensor(CoordinatorEntity[ElprisApiCoordinator], SensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any] | None:
-        """Expose the hourly forecast on the sensors that carry it."""
+        """Expose the forecast on the sensors that carry it."""
         if self.coordinator.data is None or self.entity_description.extra_fn is None:
             return None
         return self.entity_description.extra_fn(self.coordinator.data)

@@ -2,41 +2,35 @@
 
 from __future__ import annotations
 
-import logging
-
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.event import async_track_utc_time_change
 
-from .const import CONF_API_KEY, DOMAIN
-from .coordinator import ElprisApiCoordinator
-
-_LOGGER = logging.getLogger(__name__)
+from .const import CLOCK_TICK_MINUTES
+from .coordinator import ElprisApiConfigEntry, ElprisApiCoordinator
 
 PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BINARY_SENSOR]
-
-type ElprisApiConfigEntry = ConfigEntry[ElprisApiCoordinator]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ElprisApiConfigEntry) -> bool:
     """Set up Elpris API from a config entry."""
     coordinator = ElprisApiCoordinator(hass, entry)
     await coordinator.async_config_entry_first_refresh()
+    entry.runtime_data = coordinator
 
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
+    entry.async_on_unload(
+        async_track_utc_time_change(
+            hass,
+            coordinator.async_handle_clock_tick,
+            minute=CLOCK_TICK_MINUTES,
+            second=0,
+        )
+    )
+
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ElprisApiConfigEntry) -> bool:
     """Unload a config entry."""
-    if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
-        hass.data[DOMAIN].pop(entry.entry_id)
-    return unload_ok
-
-
-async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Migrate old config entries to the current version."""
-    _LOGGER.debug("Migrating Elpris API entry from version %s", entry.version)
-    return True
+    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)

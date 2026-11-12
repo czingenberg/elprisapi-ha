@@ -6,15 +6,22 @@ from datetime import timedelta
 
 DOMAIN = "elprisapi"
 NAME = "Elpris API"
-VERSION = "0.1.4"
 
 API_BASE = "https://data.elprisapi.dk"
 API_KEY_HEADER = "X-Api-Key"
 REQUEST_TIMEOUT = 20
 
-# Tomorrow's prices are published around 13:00 Danish time, so poll often
-# enough to pick them up promptly without hammering the API.
-DEFAULT_SCAN_INTERVAL = timedelta(minutes=15)
+# Prices only change once a day, when tomorrow's prices are published around
+# 13:00 Danish time. Poll often while waiting for them and rarely otherwise.
+SCAN_INTERVAL_WAITING = timedelta(minutes=10)
+SCAN_INTERVAL_IDLE = timedelta(hours=1)
+# Danish hour from which tomorrow's prices are expected to show up.
+TOMORROW_EXPECTED_FROM_HOUR = 12
+
+# Between polls the entities are re-evaluated from cached prices on every
+# quarter hour, so "current price" and the today/tomorrow split follow the
+# clock rather than the polling schedule.
+CLOCK_TICK_MINUTES = [0, 15, 30, 45]
 
 CONF_ZONE = "zone"
 CONF_OPERATOR = "operator"
@@ -30,3 +37,4 @@ ZONES = ["dk1", "dk2"]
 DEFAULT_ZONE = "dk1"
 
 MANUFACTURER = "data.elprisapi.dk"
+DOCS_URL = "https://data.elprisapi.dk/docs/"

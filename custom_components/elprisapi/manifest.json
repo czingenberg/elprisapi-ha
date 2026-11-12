@@ -1,13 +1,13 @@
 {
   "domain": "elprisapi",
   "name": "Elpris API",
-  "codeowners": ["@webzi"],
+  "codeowners": ["@czingenberg"],
   "config_flow": true,
-  "documentation": "https://data.elprisapi.dk/docs/",
-  "integration_type": "hub",
+  "documentation": "https://github.com/czingenberg/elprisapi-ha",
+  "integration_type": "service",
   "iot_class": "cloud_polling",
-  "issue_tracker": "https://github.com/webzi/elprisapi-ha/issues",
+  "issue_tracker": "https://github.com/czingenberg/elprisapi-ha/issues",
   "loggers": ["custom_components.elprisapi"],
   "requirements": [],
-  "version": "0.1.4"
+  "version": "0.2.0"
 }

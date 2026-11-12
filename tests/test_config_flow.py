@@ -1,14 +1,15 @@
-"""Regression tests for the config flow contract.
+"""Tests for the config flow: setup, operator choice, errors and reauth.
 
 The first version of this integration crashed with ``KeyError: 'today'`` in
 production because config_flow expected a dict shape that
 ``api.async_get_prices`` no longer returned after a refactor. These tests pin
-the contract between the two modules so that cannot happen again, and use the
-real Home Assistant test harness so the flow runs exactly as it does live.
+the contract between the two modules and use the real Home Assistant test
+harness so the flow runs exactly as it does live.
 """
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from unittest.mock import patch
 
 import pytest
@@ -19,32 +20,70 @@ from homeassistant.data_entry_flow import FlowResultType
 from custom_components.elprisapi import api
 from custom_components.elprisapi.const import DOMAIN
 
-from pytest_homeassistant_custom_component.common import MockConfigEntry  # noqa: F401
+from helpers import mock_entry
+
+OPERATORS = {
+    "operators": [
+        {"slug": "trefor-el-net", "name": "TREFOR El-net", "company": "TREFOR El-net A/S"},
+        {"slug": "n1", "name": "N1", "company": "N1 A/S - 131"},
+    ]
+}
+PRICES = {
+    "zone": "dk1",
+    "unit": "dkk_per_kwh",
+    "date": "2026-11-12",
+    "prices": [{"hour": "2026-11-12T00:00:00+01:00", "total": 1.85}],
+}
 
 
-async def _fake_prices(zone, operator, day=None):
-    return {
-        "zone": zone,
-        "unit": "dkk_per_kwh",
-        "date": "2026-11-12",
-        "prices": [{"hour": "2026-11-12T00:00:00+01:00", "total": 1.85}],
-    }
+@pytest.fixture(autouse=True)
+def skip_entry_setup():
+    """These tests exercise the flow, not the integration setup."""
+    with patch("custom_components.elprisapi.async_setup_entry", return_value=True):
+        yield
 
 
-async def test_config_flow_creates_entry(hass: HomeAssistant) -> None:
-    """The flow must consume exactly the shape the API client returns."""
-    with patch.object(
-        api.ElprisApiClient, "async_get_prices", side_effect=_fake_prices
+@contextmanager
+def _api(operators=OPERATORS, prices=PRICES):
+    """Patch the two client calls; pass an exception to make one fail."""
+
+    def _mock(result):
+        if isinstance(result, Exception):
+            return {"side_effect": result}
+        return {"return_value": result}
+
+    with (
+        patch.object(api.ElprisApiClient, "async_get_operators", **_mock(operators)),
+        patch.object(api.ElprisApiClient, "async_get_prices", **_mock(prices)) as get_prices,
     ):
-        result = await hass.config_entries.flow.async_init(
-            DOMAIN, context={"source": config_entries.SOURCE_USER}
-        )
+        yield get_prices
+
+
+async def _start(hass: HomeAssistant, user_input: dict):
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "user"
+    return await hass.config_entries.flow.async_configure(result["flow_id"], user_input)
+
+
+async def test_full_flow_with_operator(hass: HomeAssistant) -> None:
+    """Key and zone, then an operator picked from the API's list."""
+    with _api() as get_prices:
+        result = await _start(hass, {"api_key": " key ", "zone": "dk1"})
         assert result["type"] is FlowResultType.FORM
-        assert result["step_id"] == "user"
+        assert result["step_id"] == "operator"
+
+        selector = result["data_schema"].schema["operator"]
+        assert [option["value"] for option in selector.config["options"]] == [
+            "none",
+            "n1",
+            "trefor-el-net",
+        ]
 
         result = await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            {"api_key": "key", "zone": "dk1", "operator": "trefor-el-net"},
+            result["flow_id"], {"operator": "trefor-el-net"}
         )
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
@@ -54,114 +93,115 @@ async def test_config_flow_creates_entry(hass: HomeAssistant) -> None:
         "operator": "trefor-el-net",
     }
     assert "DK1" in result["title"]
+    assert result["result"].unique_id == "dk1_trefor-el-net"
+    get_prices.assert_awaited_once_with("dk1", "trefor-el-net")
 
 
-async def test_config_flow_without_operator(hass: HomeAssistant) -> None:
-    """The operator field is optional and normalises to None."""
-    with patch.object(
-        api.ElprisApiClient, "async_get_prices", side_effect=_fake_prices
-    ):
-        result = await hass.config_entries.flow.async_init(
-            DOMAIN, context={"source": config_entries.SOURCE_USER}
-        )
+async def test_flow_without_operator(hass: HomeAssistant) -> None:
+    """"No grid operator" is stored as None."""
+    with _api() as get_prices:
+        result = await _start(hass, {"api_key": "key", "zone": "dk2"})
         result = await hass.config_entries.flow.async_configure(
-            result["flow_id"], {"api_key": "key", "zone": "dk2", "operator": ""}
+            result["flow_id"], {"operator": "none"}
         )
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"]["operator"] is None
+    assert result["result"].unique_id == "dk2_none"
+    get_prices.assert_awaited_once_with("dk2", None)
 
 
-async def test_config_flow_empty_prices_is_no_data(hass: HomeAssistant) -> None:
-    """An empty prices list must show no_data rather than crashing."""
+async def test_operator_must_come_from_the_list(hass: HomeAssistant) -> None:
+    """Free text can no longer reach the API's URL path."""
+    with _api():
+        result = await _start(hass, {"api_key": "key", "zone": "dk1"})
+        with pytest.raises(Exception):  # noqa: B017, PT011 - schema validation
+            await hass.config_entries.flow.async_configure(
+                result["flow_id"], {"operator": "../health"}
+            )
 
-    async def _empty(zone, operator, day=None):
-        return {"zone": zone, "prices": []}
 
-    with patch.object(api.ElprisApiClient, "async_get_prices", side_effect=_empty):
-        result = await hass.config_entries.flow.async_init(
-            DOMAIN, context={"source": config_entries.SOURCE_USER}
-        )
+@pytest.mark.parametrize(
+    ("failure", "error"),
+    [
+        (api.ElprisApiAuthError("401"), "invalid_auth"),
+        (api.ElprisApiConnectionError("timeout"), "cannot_connect"),
+        (api.ElprisApiError("HTTP 500"), "cannot_connect"),
+        (RuntimeError("boom"), "unknown"),
+    ],
+)
+async def test_key_check_errors(hass: HomeAssistant, failure, error) -> None:
+    """The key is checked in the first step, and the form can be retried."""
+    with _api(operators=failure):
+        result = await _start(hass, {"api_key": "bad", "zone": "dk1"})
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "user"
+    assert result["errors"] == {"base": error}
+
+    with _api():
         result = await hass.config_entries.flow.async_configure(
-            result["flow_id"], {"api_key": "key", "zone": "dk1", "operator": "bad"}
+            result["flow_id"], {"api_key": "good", "zone": "dk1"}
+        )
+    assert result["step_id"] == "operator"
+
+
+@pytest.mark.parametrize(
+    "prices",
+    [
+        {"zone": "dk1", "prices": []},
+        api.ElprisApiError("HTTP 404 Unknown operator"),
+    ],
+)
+async def test_no_prices_for_operator_is_no_data(hass: HomeAssistant, prices) -> None:
+    """An empty or failing price lookup shows no_data rather than crashing."""
+    with _api(prices=prices):
+        result = await _start(hass, {"api_key": "key", "zone": "dk1"})
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {"operator": "n1"}
         )
 
     assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "operator"
     assert result["errors"] == {"base": "no_data"}
-
-
-async def test_config_flow_unknown_operator_maps_to_no_data(
-    hass: HomeAssistant,
-) -> None:
-    """A 404 for an unknown slug maps to no_data, not unknown."""
-    with patch.object(
-        api.ElprisApiClient,
-        "async_get_prices",
-        side_effect=api.ElprisApiError("HTTP 404 Unknown operator"),
-    ):
-        result = await hass.config_entries.flow.async_init(
-            DOMAIN, context={"source": config_entries.SOURCE_USER}
-        )
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"], {"api_key": "key", "zone": "dk1", "operator": "nope"}
-        )
-
-    assert result["errors"] == {"base": "no_data"}
-
-
-async def test_config_flow_auth_error(hass: HomeAssistant) -> None:
-    """A rejected key must show invalid_auth."""
-    with patch.object(
-        api.ElprisApiClient,
-        "async_get_prices",
-        side_effect=api.ElprisApiAuthError("401"),
-    ):
-        result = await hass.config_entries.flow.async_init(
-            DOMAIN, context={"source": config_entries.SOURCE_USER}
-        )
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"], {"api_key": "bad", "zone": "dk1"}
-        )
-
-    assert result["errors"] == {"base": "invalid_auth"}
-
-
-async def test_config_flow_connection_error(hass: HomeAssistant) -> None:
-    """An unreachable API must show cannot_connect."""
-    with patch.object(
-        api.ElprisApiClient,
-        "async_get_prices",
-        side_effect=api.ElprisApiConnectionError("timeout"),
-    ):
-        result = await hass.config_entries.flow.async_init(
-            DOMAIN, context={"source": config_entries.SOURCE_USER}
-        )
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"], {"api_key": "key", "zone": "dk1"}
-        )
-
-    assert result["errors"] == {"base": "cannot_connect"}
 
 
 async def test_duplicate_zone_and_operator_aborts(hass: HomeAssistant) -> None:
     """Configuring the same zone/operator twice must abort."""
-    existing = MockConfigEntry(
-        domain=DOMAIN,
-        unique_id="dk1_trefor-el-net",
-        data={"api_key": "key", "zone": "dk1", "operator": "trefor-el-net"},
-    )
-    existing.add_to_hass(hass)
+    mock_entry().add_to_hass(hass)
 
-    with patch.object(
-        api.ElprisApiClient, "async_get_prices", side_effect=_fake_prices
-    ):
-        result = await hass.config_entries.flow.async_init(
-            DOMAIN, context={"source": config_entries.SOURCE_USER}
-        )
+    with _api():
+        result = await _start(hass, {"api_key": "key2", "zone": "dk1"})
         result = await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            {"api_key": "key2", "zone": "dk1", "operator": "trefor-el-net"},
+            result["flow_id"], {"operator": "trefor-el-net"}
         )
 
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "already_configured"
+
+
+async def test_reauth_replaces_the_key(hass: HomeAssistant) -> None:
+    """A rejected key can be replaced without removing the entry."""
+    entry = mock_entry()
+    entry.add_to_hass(hass)
+
+    result = await entry.start_reauth_flow(hass)
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "reauth_confirm"
+
+    with _api(operators=api.ElprisApiAuthError("401")):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {"api_key": "still-bad"}
+        )
+    assert result["errors"] == {"base": "invalid_auth"}
+    assert entry.data["api_key"] == "key"
+
+    with _api():
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {"api_key": "new-key"}
+        )
+        await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reauth_successful"
+    assert entry.data == {"api_key": "new-key", "zone": "dk1", "operator": "trefor-el-net"}

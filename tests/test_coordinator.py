@@ -1,85 +1,65 @@
-"""Tests for the coordinator's data assembly and failure handling."""
+"""Tests for the coordinator's data assembly, caching and failure handling."""
 
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
-from zoneinfo import ZoneInfo
 from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
 import pytest
+from freezegun import freeze_time
 from homeassistant.core import HomeAssistant
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers.update_coordinator import UpdateFailed
 
 from custom_components.elprisapi import api
-from custom_components.elprisapi.const import DOMAIN
+from custom_components.elprisapi.const import SCAN_INTERVAL_IDLE, SCAN_INTERVAL_WAITING
 from custom_components.elprisapi.coordinator import ElprisApiCoordinator
+from custom_components.elprisapi.pricing import forecast_attribute
+
+from helpers import fake_prices, mock_entry
+
+CPH = ZoneInfo("Europe/Copenhagen")
+D12 = date(2026, 11, 12)
+D13 = date(2026, 11, 13)
+HOURLY = [float(h) for h in range(24)]  # total == hour of day
 
 
-def _payload(day: date, totals: list[float]) -> dict:
-    return {
-        "zone": "dk1",
-        "unit": "dkk_per_kwh",
-        "date": day.isoformat(),
-        "prices": [
-            {
-                "hour": f"{day.isoformat()}T{i:02d}:00:00+01:00",
-                "spot_price": t - 0.5,
-                "electricity_tax": 0.008,
-                "system_tariff": 0.072,
-                "transmission_tariff": 0.043,
-                "grid_tariff": 0.1288,
-                "total_excl_vat": t * 0.8,
-                "vat": t * 0.2,
-                "total": t,
-            }
-            for i, t in enumerate(totals)
-        ],
-    }
+def _coordinator(hass: HomeAssistant) -> ElprisApiCoordinator:
+    entry = mock_entry()
+    entry.add_to_hass(hass)
+    return ElprisApiCoordinator(hass, entry)
 
 
-def _entry() -> MockConfigEntry:
-    return MockConfigEntry(
-        domain=DOMAIN,
-        unique_id="dk1_trefor-el-net",
-        data={"api_key": "key", "zone": "dk1", "operator": "trefor-el-net"},
-    )
+def _patch_prices(fake):
+    return patch.object(api.ElprisApiClient, "async_get_prices", fake)
 
 
 async def test_coordinator_combines_today_and_tomorrow(hass: HomeAssistant) -> None:
-    """Today + tomorrow slots are merged, and stats cover both days."""
-    entry = _entry()
-    entry.add_to_hass(hass)
-    today = datetime.now(ZoneInfo("Europe/Copenhagen")).date()
+    """Both days come from one range request, and stats cover each day."""
+    today = datetime.now(CPH).date()
+    tomorrow = today + timedelta(days=1)
+    calls: list[dict] = []
 
-    async def _fake(self, zone, operator, day=None):
-        if day is None:
-            return _payload(today, [1.0, 2.0, 3.0])
-        return _payload(day, [4.0, 5.0])
+    with _patch_prices(
+        fake_prices({today: [1.0, 2.0, 3.0], tomorrow: [4.0, 5.0]}, calls)
+    ):
+        data = await _coordinator(hass)._async_update_data()
 
-    with patch.object(api.ElprisApiClient, "async_get_prices", _fake):
-        coordinator = ElprisApiCoordinator(hass, entry)
-        data = await coordinator._async_update_data()
-
+    assert calls == [{"day": None, "start": today, "end": tomorrow}]
     assert len(data.slots) == 5
     assert data.tomorrow_available is True
     assert data.today_stats == {"min": 1.0, "mean": 2.0, "max": 3.0}
     assert data.tomorrow_stats == {"min": 4.0, "mean": 4.5, "max": 5.0}
+    assert [f["price"] for f in forecast_attribute(data.slots)] == [1, 2, 3, 4, 5]
 
 
-async def test_coordinator_survives_tomorrow_failure(hass: HomeAssistant) -> None:
-    """Tomorrow being unavailable must not break today's sensors."""
-    entry = _entry()
-    entry.add_to_hass(hass)
-    today = datetime.now(ZoneInfo("Europe/Copenhagen")).date()
+async def test_tomorrow_not_published_yet(hass: HomeAssistant) -> None:
+    """Missing tomorrow prices must not break today's sensors."""
+    today = datetime.now(CPH).date()
 
-    async def _fake(self, zone, operator, day=None):
-        if day is None:
-            return _payload(today, [1.0, 2.0])
-        raise api.ElprisApiError("HTTP 500")
-
-    with patch.object(api.ElprisApiClient, "async_get_prices", _fake):
-        coordinator = ElprisApiCoordinator(hass, entry)
-        data = await coordinator._async_update_data()
+    with _patch_prices(fake_prices({today: [1.0, 2.0]})):
+        data = await _coordinator(hass)._async_update_data()
 
     assert len(data.slots) == 2
     assert data.tomorrow_available is False
@@ -87,59 +67,39 @@ async def test_coordinator_survives_tomorrow_failure(hass: HomeAssistant) -> Non
     assert data.today_stats is not None
 
 
-async def test_coordinator_raises_on_empty_today(hass: HomeAssistant) -> None:
+async def test_falls_back_to_today_when_range_is_rejected(hass: HomeAssistant) -> None:
+    """An HTTP error on the range request retries with the plain today request."""
+    today = datetime.now(CPH).date()
+    serve_today = fake_prices({today: [1.0, 2.0]})
+
+    async def _fake(self, zone, operator, day=None, *, start=None, end=None):
+        if start is not None:
+            raise api.ElprisApiError("HTTP 400 range not available")
+        return await serve_today(self, zone, operator, day)
+
+    with _patch_prices(_fake):
+        data = await _coordinator(hass)._async_update_data()
+
+    assert len(data.today_slots) == 2
+
+
+async def test_coordinator_raises_on_empty(hass: HomeAssistant) -> None:
     """No prices at all is a genuine failure and must raise UpdateFailed."""
-    from homeassistant.helpers.update_coordinator import UpdateFailed
-
-    entry = _entry()
-    entry.add_to_hass(hass)
-
-    async def _fake(self, zone, operator, day=None):
-        return {"zone": zone, "prices": []}
-
-    with patch.object(api.ElprisApiClient, "async_get_prices", _fake):
-        coordinator = ElprisApiCoordinator(hass, entry)
-        with pytest.raises(UpdateFailed):
-            await coordinator._async_update_data()
+    with _patch_prices(fake_prices({})), pytest.raises(UpdateFailed):
+        await _coordinator(hass)._async_update_data()
 
 
-async def test_coordinator_raises_on_auth_failure(hass: HomeAssistant) -> None:
-    """A rejected key must surface as UpdateFailed."""
-    from homeassistant.helpers.update_coordinator import UpdateFailed
-
-    entry = _entry()
-    entry.add_to_hass(hass)
-
-    with patch.object(
-        api.ElprisApiClient,
-        "async_get_prices",
-        side_effect=api.ElprisApiAuthError("401"),
+async def test_auth_failure_triggers_reauth(hass: HomeAssistant) -> None:
+    """A rejected key must raise ConfigEntryAuthFailed so HA starts reauth."""
+    with (
+        patch.object(
+            api.ElprisApiClient,
+            "async_get_prices",
+            side_effect=api.ElprisApiAuthError("401"),
+        ),
+        pytest.raises(ConfigEntryAuthFailed),
     ):
-        coordinator = ElprisApiCoordinator(hass, entry)
-        with pytest.raises(UpdateFailed):
-            await coordinator._async_update_data()
-
-
-async def test_forecast_covers_both_days(hass: HomeAssistant) -> None:
-    """Forecast attributes must include every slot we hold."""
-    from custom_components.elprisapi.pricing import forecast_attribute
-
-    entry = _entry()
-    entry.add_to_hass(hass)
-    today = datetime.now(ZoneInfo("Europe/Copenhagen")).date()
-
-    async def _fake(self, zone, operator, day=None):
-        if day is None:
-            return _payload(today, [1.0, 2.0])
-        return _payload(day, [3.0, 4.0])
-
-    with patch.object(api.ElprisApiClient, "async_get_prices", _fake):
-        coordinator = ElprisApiCoordinator(hass, entry)
-        data = await coordinator._async_update_data()
-
-    forecast = forecast_attribute(data.slots)
-    assert len(forecast) == 4
-    assert [f["price"] for f in forecast] == [1.0, 2.0, 3.0, 4.0]
+        await _coordinator(hass)._async_update_data()
 
 
 async def test_day_bucketing_uses_copenhagen_not_ha_timezone(
@@ -151,28 +111,101 @@ async def test_day_bucketing_uses_copenhagen_not_ha_timezone(
     Copenhagen on the 13th while Pacific is still on the 12th, so a coordinator
     that bucketed by the HA timezone would put the stats on the wrong day.
     """
-    from freezegun import freeze_time
     from homeassistant.util import dt as dt_util
 
-    entry = _entry()
-    entry.add_to_hass(hass)
-
     with freeze_time("2026-11-13 06:00:00+00:00"):
-        danish_today = datetime.now(ZoneInfo("Europe/Copenhagen")).date()
-        ha_today = dt_util.now().date()
-        assert danish_today != ha_today, "timezones should disagree at this instant"
-        assert danish_today.isoformat() == "2026-11-13"
-        assert ha_today.isoformat() == "2026-11-12"
+        assert dt_util.now().date() == D12
 
-        async def _fake(self, zone, operator, day=None):
-            if day is None:
-                return _payload(danish_today, [1.0, 2.0])
-            return {"zone": zone, "prices": []}
+        with _patch_prices(fake_prices({D13: HOURLY})):
+            data = await _coordinator(hass)._async_update_data()
 
-        with patch.object(api.ElprisApiClient, "async_get_prices", _fake):
-            coordinator = ElprisApiCoordinator(hass, entry)
+    assert len(data.today_slots) == 24
+    assert data.current_breakdown["total"] == 7.0  # 06:00 UTC is 07:00 in Denmark
+
+
+async def test_outage_is_served_from_cache_while_it_covers_now(
+    hass: HomeAssistant,
+) -> None:
+    """A failed poll keeps the sensors alive until the cached prices run out."""
+    coordinator = _coordinator(hass)
+    down = patch.object(
+        api.ElprisApiClient,
+        "async_get_prices",
+        side_effect=api.ElprisApiConnectionError("timeout"),
+    )
+
+    with freeze_time("2026-11-12 12:30:00+00:00") as clock:
+        with _patch_prices(fake_prices({D12: HOURLY})):
+            await coordinator._async_update_data()
+
+        with down:
+            clock.move_to("2026-11-12 14:30:00+00:00")
+            data = await coordinator._async_update_data()
+            # Served from cache, and following the clock: 15:30 Danish time.
+            assert data.current_breakdown["total"] == 15.0
+            assert coordinator.update_interval == SCAN_INTERVAL_WAITING
+
+            # Past the end of the cached day there is nothing left to serve.
+            clock.move_to("2026-11-13 00:30:00+00:00")
+            with pytest.raises(UpdateFailed):
+                await coordinator._async_update_data()
+
+
+async def test_tomorrow_is_kept_if_a_later_response_omits_it(
+    hass: HomeAssistant,
+) -> None:
+    """Published prices must not vanish again, which would re-fire automations."""
+    coordinator = _coordinator(hass)
+
+    with freeze_time("2026-11-12 13:00:00+00:00"):
+        with _patch_prices(fake_prices({D12: HOURLY, D13: HOURLY})):
+            await coordinator._async_update_data()
+        with _patch_prices(fake_prices({D12: HOURLY})):
             data = await coordinator._async_update_data()
 
-    # Stats landed on the Danish day, not the HA-local day.
-    assert data.today_stats == {"min": 1.0, "mean": 1.5, "max": 2.0}
-    assert len(data.today_slots) == 2
+    assert data.tomorrow_available is True
+
+
+async def test_clock_tick_follows_the_hour_and_the_day(hass: HomeAssistant) -> None:
+    """Between polls, the current slot and today/tomorrow follow the clock."""
+    coordinator = _coordinator(hass)
+    tomorrow_totals = [100.0 + h for h in range(24)]
+
+    with freeze_time("2026-11-12 12:59:00+00:00") as clock:  # 13:59 Danish time
+        with _patch_prices(fake_prices({D12: HOURLY, D13: tomorrow_totals})):
+            coordinator.data = await coordinator._async_update_data()
+        assert coordinator.data.current_breakdown["total"] == 13.0
+
+        clock.move_to("2026-11-12 13:00:00+00:00")
+        coordinator.async_handle_clock_tick()
+        assert coordinator.data.current_breakdown["total"] == 14.0
+        assert coordinator.data.tomorrow_available is True
+
+        clock.move_to("2026-11-12 23:00:00+00:00")  # Danish midnight
+        coordinator.async_handle_clock_tick()
+
+    data = coordinator.data
+    assert data.current_breakdown["total"] == 100.0
+    assert data.today_stats == {"min": 100.0, "mean": 111.5, "max": 123.0}
+    assert data.tomorrow_available is False
+    assert len(data.slots) == 24  # yesterday was pruned
+
+
+@pytest.mark.parametrize(
+    ("utc_now", "days", "expected"),
+    [
+        # 11:00 Danish time: tomorrow is not expected yet.
+        ("2026-11-12 10:00:00+00:00", {D12: HOURLY}, SCAN_INTERVAL_IDLE),
+        # 13:30 Danish time and still no tomorrow: poll often.
+        ("2026-11-12 12:30:00+00:00", {D12: HOURLY}, SCAN_INTERVAL_WAITING),
+        # Tomorrow has arrived: nothing more to wait for today.
+        ("2026-11-12 12:30:00+00:00", {D12: HOURLY, D13: HOURLY}, SCAN_INTERVAL_IDLE),
+    ],
+)
+async def test_polls_often_only_while_waiting_for_tomorrow(
+    hass: HomeAssistant, utc_now, days, expected
+) -> None:
+    coordinator = _coordinator(hass)
+    with freeze_time(utc_now), _patch_prices(fake_prices(days)):
+        await coordinator._async_update_data()
+    assert coordinator.update_interval == expected

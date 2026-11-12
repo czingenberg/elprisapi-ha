@@ -27,31 +27,43 @@ def parse_hour(value: str) -> datetime:
     return datetime.fromisoformat(value)
 
 
+# Prices are hourly today. A slot is never assumed to be longer than this.
+MAX_SLOT = timedelta(hours=1)
+
+
 def build_slots(
     prices: Iterable[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Turn the raw ``prices`` array into ordered hourly slots.
+    """Turn the raw ``prices`` array into ordered slots.
 
     On daylight saving switch days the API returns 23 or 25 entries and the
     two 02:00 entries differ only by their UTC offset; sorting on the aware
     datetime keeps them in the right absolute order.
+
+    The slot length is taken from the smallest gap between consecutive
+    entries (capped at one hour), so finer-grained prices would produce
+    correspondingly shorter, non-overlapping slots.
     """
-    slots: list[dict[str, Any]] = []
-    for entry in prices:
-        start = parse_hour(entry["hour"])
-        slots.append(
-            {
-                "start": start,
-                "end": start + timedelta(hours=1),
-                "breakdown": {
-                    key: _as_float(entry.get(key))
-                    for key in COMPONENTS
-                    if entry.get(key) is not None
-                },
-            }
-        )
-    slots.sort(key=lambda slot: slot["start"])
-    return slots
+    parsed = sorted(
+        ((parse_hour(entry["hour"]), entry) for entry in prices),
+        key=lambda item: item[0],
+    )
+    starts = [start for start, _ in parsed]
+    gaps = [later - earlier for earlier, later in zip(starts, starts[1:]) if later > earlier]
+    step = min([*gaps, MAX_SLOT])
+
+    return [
+        {
+            "start": start,
+            "end": start + step,
+            "breakdown": {
+                key: value
+                for key in COMPONENTS
+                if (value := _as_float(entry.get(key))) is not None
+            },
+        }
+        for start, entry in parsed
+    ]
 
 
 def _as_float(value: Any) -> float | None:
