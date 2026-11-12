@@ -59,13 +59,19 @@ Dashboards and automations written against `stromligning` work unchanged.
 Copy `custom_components/elprisapi/` into your Home Assistant
 `config/custom_components/` directory and restart.
 
+## Getting an API key
+
+The key is **free**. Request one at
+**[elprisapi.dk/#api-noegle](https://elprisapi.dk/#api-noegle)** — enter your email
+and it is delivered by mail (no account, no spam).
+
 ## Configuration
 
 **Settings → Devices & Services → Add Integration → Elpris API**
 
 | Field | Notes |
 | --- | --- |
-| API key | From your elprisapi.dk account. Sent as `X-Api-Key`. |
+| API key | Free from [elprisapi.dk/#api-noegle](https://elprisapi.dk/#api-noegle). Sent as `X-Api-Key`. |
 | Price zone | `dk1` (west of the Great Belt) or `dk2` (east). |
 | Grid operator slug | Optional. Adds the grid tariff. Leave empty for prices without it. |
 

@@ -3,14 +3,14 @@
     "step": {
       "user": {
         "title": "Elpris API",
-        "description": "Connect to data.elprisapi.dk to get Danish hourly electricity prices with the full tariff breakdown.\n\nYour API key is stored in the Home Assistant config entry.",
+        "description": "Connect to data.elprisapi.dk to get Danish hourly electricity prices with the full tariff breakdown.\n\nYour API key is stored in the Home Assistant config entry.\n\n**No API key yet?** Get a free one at [elprisapi.dk/#api-noegle](https://elprisapi.dk/#api-noegle) — it is emailed to you.",
         "data": {
           "api_key": "API key",
           "zone": "Price zone",
           "operator": "Grid operator slug (optional)"
         },
         "data_description": {
-          "api_key": "Sent as the X-Api-Key header to data.elprisapi.dk.",
+          "api_key": "Free from https://elprisapi.dk/#api-noegle. Sent as the X-Api-Key header to data.elprisapi.dk.",
           "zone": "DK1 is west of the Great Belt (Jutland and Funen); DK2 is east (Zealand and Bornholm).",
           "operator": "Adds the grid operator tariff. Leave empty to get prices without it. Slugs include rah, n1, radius, trefor-el-net."
         }

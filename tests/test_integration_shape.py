@@ -56,6 +56,20 @@ check(
     "already_configured" in strings["config"]["abort"],
 )
 
+# The setup form is where someone needs the link, so keep it there and in the
+# per-field hint. Losing it sends users hunting for where to get a key.
+KEY_URL = "https://elprisapi.dk/#api-noegle"
+_step = strings["config"]["step"]["user"]
+check("setup form links to the key page", KEY_URL in _step["description"])
+check(
+    "api_key hint links to the key page",
+    KEY_URL in _step["data_description"]["api_key"],
+)
+check(
+    "README links to the key page",
+    KEY_URL in (COMPONENT_DIR.parents[1] / "README.md").read_text(),
+)
+
 print("\nmodule imports")
 from custom_components.elprisapi import api, binary_sensor, config_flow, const, coordinator, pricing, sensor  # noqa: E402
 
